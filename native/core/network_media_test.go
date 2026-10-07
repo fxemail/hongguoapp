@@ -218,3 +218,130 @@ func TestVideoEpisodeParsingPrefersNumberedLinksOverStartButton(t *testing.T) {
 		t.Fatal("start button replaced an episode", episodes)
 	}
 }
+
+// TestMediaRequestHeaders 覆盖红果跨域 CDN 场景（防 403 防盗链）
+// v2 fix 核心逻辑：referer 与 request URL host 不一致时自动智能兑底为同源
+func TestMediaRequestHeaders(t *testing.T) {
+	cases := []struct {
+		name             string
+		referer          string
+		requestURL       string
+		wantReferer      string
+		wantOrigin       string
+	}{
+		{
+			name:        "同源保留原 referer",
+			referer:     "https://hongguoduanju.com/player/123",
+			requestURL:  "https://hongguoduanju.com/video.mp4",
+			wantReferer: "https://hongguoduanju.com/player/123",
+			wantOrigin:  "https://hongguoduanju.com",
+		},
+		{
+			name:        "空 referer 兑底为 request URL host",
+			referer:     "",
+			requestURL:  "https://douyinvod.com/xx/video.mp4",
+			wantReferer: "https://douyinvod.com/",
+			wantOrigin:  "https://douyinvod.com",
+		},
+		{
+			name:        "跨域 referer 兑底为 request URL host（红果主场景）",
+			referer:     "https://novel.snssdk.com/",
+			requestURL:  "https://douyinvod.com/xx/video.mp4",
+			wantReferer: "https://douyinvod.com/",
+			wantOrigin:  "https://douyinvod.com",
+		},
+		{
+			name:        "子域陷阱：a.com 与 b.a.com 不判为同域（防 strings.Contains 误伤）",
+			referer:     "https://b.a.com/page",
+			requestURL:  "https://a.com/video.mp4",
+			wantReferer: "https://a.com/",
+			wantOrigin:  "https://a.com",
+		},
+		{
+			name:        "大小写不敏感同源（EqualFold）",
+			referer:     "https://HongGuoDuanJu.com/page",
+			requestURL:  "https://hongguoduanju.com/video.mp4",
+			wantReferer: "https://HongGuoDuanJu.com/page",
+			wantOrigin:  "https://HongGuoDuanJu.com",
+		},
+		{
+			name:        "Referer 末尾带 path 保持原样（Origin 只取 host）",
+			referer:     "https://www.sorani.net/play/123",
+			requestURL:  "https://www.sorani.net/cdn/video.mp4",
+			wantReferer: "https://www.sorani.net/play/123",
+			wantOrigin:  "https://www.sorani.net",
+		},
+		{
+			name:        "Referer 是 base64/乱码 解析失败时兑底",
+			referer:     "not-a-valid-url",
+			requestURL:  "https://cdn.example.com/video.mp4",
+			wantReferer: "https://cdn.example.com/",
+			wantOrigin:  "https://cdn.example.com",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest("GET", tc.requestURL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mediaRequestHeaders(req, tc.referer)
+			if got := req.Header.Get("Referer"); got != tc.wantReferer {
+				t.Errorf("Referer: got %q, want %q", got, tc.wantReferer)
+			}
+			if got := req.Header.Get("Origin"); got != tc.wantOrigin {
+				t.Errorf("Origin: got %q, want %q", got, tc.wantOrigin)
+			}
+		})
+	}
+}
+
+// TestMediaRequestHeadersRefreshRefererOverride v3 fix: URL 过期 refresh 后
+// session.referer="" 状态 + request URL 是新 CDN host，验证兜底逻辑生效。
+func TestMediaRequestHeadersRefreshRefererOverride(t *testing.T) {
+	cases := []struct {
+		name        string
+		referer     string // 通常 refresh 后 session.referer 是 ""
+		requestURL  string
+		wantReferer string
+		wantOrigin  string
+	}{
+		{
+			name:        "refresh 后空 referer，跨 CDN 兜底为新 host",
+			referer:     "",
+			requestURL:  "https://v11-hgweb.qznovelvod.com/917ddcb.../video.mp4",
+			wantReferer: "https://v11-hgweb.qznovelvod.com/",
+			wantOrigin:  "https://v11-hgweb.qznovelvod.com",
+		},
+		{
+			name:        "refresh 后空 referer，青空 CDN 同域兜底",
+			referer:     "",
+			requestURL:  "https://www.sorani.net/cdn/video.ts",
+			wantReferer: "https://www.sorani.net/",
+			wantOrigin:  "https://www.sorani.net",
+		},
+		{
+			name:        "refresh 后原 referer=hongguoduanju 但 CDN 已变 douyinvod，兜底新 host",
+			referer:     "https://hongguoduanju.com/player/123",
+			requestURL:  "https://douyinvod.com/xx/video.mp4?l=20261004201453BDE6F8A6065B68A5E326",
+			wantReferer: "https://douyinvod.com/",
+			wantOrigin:  "https://douyinvod.com",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest("GET", tc.requestURL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mediaRequestHeaders(req, tc.referer)
+			if got := req.Header.Get("Referer"); got != tc.wantReferer {
+				t.Errorf("Referer: got %q, want %q", got, tc.wantReferer)
+			}
+			if got := req.Header.Get("Origin"); got != tc.wantOrigin {
+				t.Errorf("Origin: got %q, want %q", got, tc.wantOrigin)
+			}
+		})
+	}
+}

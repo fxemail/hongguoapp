@@ -89,7 +89,10 @@ func (d *Downloader) resolveHongguoPlaybackAPI(ctx context.Context, seriesID, vi
 			continue
 		}
 		quality, _ := strconv.Atoi(hongguoQualityNumber.FindString(option.Name))
-		media := providerMedia{URL: mediaURL, Referer: "https://novel.snssdk.com/", CENCKey: key, Quality: quality}
+		// v2 fix: 不再写死 novel.snssdk.com，留空 Referer，让 mediaRequestHeaders 智能兜底
+		// v3 fix: seriesID/videoID/source 留底，给 30min 签名过期时 refresh 重拉
+		// v9 fix: Referer 留空（curl 实测无 Referer = 206，写 hongguoduanju.com = 403 denied by Referer ACL）
+		media := providerMedia{URL: mediaURL, Referer: "", CENCKey: key, Quality: quality, seriesID: seriesID, videoID: videoID, source: sourceHongguo}
 		variants = append(variants, media)
 		if selected.URL == "" || quality > bestQuality {
 			selected = media

@@ -22,14 +22,18 @@ type huangguoPreviewSession struct {
 }
 
 func mediaRequestHeaders(request *http.Request, referer string) {
+	// V4A: 删除跨域兜底（v2/v3 自造 403 已被 curl 测试 #4 实证）+ 删 Origin 注入
+	// 直接用 caller 传的值（业务域 hongguoduanjing.com 或 novel.snssdk.com，curl 测过 200）
 	request.Header.Set("User-Agent", userAgent)
-	request.Header.Set("Referer", referer)
 	request.Header.Set("Accept", "*/*")
 	request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
 	request.Header.Set("Sec-Fetch-Mode", "cors")
 	request.Header.Set("Sec-Fetch-Dest", "empty")
-	if origin, err := url.Parse(referer); err == nil && origin.Host != "" {
-		request.Header.Set("Origin", origin.Scheme+"://"+origin.Host)
+	if referer != "" {
+		request.Header.Set("Referer", referer)
+	}
+	if strings.HasPrefix(strings.ToLower(request.Header.Get("Range")), "bytes=") {
+		request.Header.Set("Accept-Encoding", "identity")
 	}
 }
 
