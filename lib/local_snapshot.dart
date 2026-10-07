@@ -1,6 +1,24 @@
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:shared_preferences/shared_preferences.dart';
+
+String _encodeSnapshot(Map<String, Object> values) {
+  final content = jsonEncode({'version': 1, 'values': values});
+  if (utf8.encode(content).length > 16 * 1024 * 1024) {
+    throw StateError('本地记录超过保存上限，请先导出备份并清理记录');
+  }
+  return content;
+}
+
+Future<String> _prepareSnapshot(Map<String, Object> values) {
+  final size = values.values.fold<int>(
+    0,
+    (total, value) => total + (value is String ? value.length : 1),
+  );
+  if (size < 64 * 1024) return Future.value(_encodeSnapshot(values));
+  return Isolate.run(() => _encodeSnapshot(values));
+}
 
 class LocalSnapshot {
   LocalSnapshot(this.preferences) {
@@ -13,6 +31,7 @@ class LocalSnapshot {
     'history',
     'favorites',
     'followStates',
+    'followUpdatesV1',
     'seriesCandidates',
     'mediaHistory',
     'source',
@@ -45,7 +64,7 @@ class LocalSnapshot {
       globalKeys.contains(key) ||
       libraryKeys.contains(key) ||
       RegExp(
-        r'^profile\.[a-zA-Z0-9_-]{1,64}\.(history|favorites|followStates|seriesCandidates|mediaHistory|source|hideVip|playback|downloadPreferences|catalogView|recentSearches|lanRecords|lanSettings|lanReceipts)$',
+        r'^profile\.[a-zA-Z0-9_-]{1,64}\.(history|favorites|followStates|followUpdatesV1|seriesCandidates|mediaHistory|source|hideVip|playback|downloadPreferences|catalogView|recentSearches|lanRecords|lanSettings|lanReceipts)$',
       ).hasMatch(key);
 
   Map<String, Object> get values => Map.of(_values);
@@ -103,10 +122,7 @@ class LocalSnapshot {
 
   Future<void> commit(Map<String, Object> values) async {
     if (values.keys.any((key) => !owns(key))) throw StateError('无效的本地配置字段');
-    final content = jsonEncode({'version': 1, 'values': values});
-    if (utf8.encode(content).length > 16 * 1024 * 1024) {
-      throw StateError('本地记录超过保存上限，请先导出备份并清理记录');
-    }
+    final content = await _prepareSnapshot(Map.of(values));
     final previous = preferences.get(storageKey);
     try {
       if (!await preferences.setString(storageKey, content)) {
